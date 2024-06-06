@@ -1,1 +1,1 @@
-print gghggg
+print ("gghggg")
