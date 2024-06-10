@@ -33,19 +33,22 @@ Graph options:
 ## Join df with data on county area
 
 ```{r}
-pop_density_df <- read_csv("/Users/nicolesorensen/Dropbox/CountyProfile.csv")
+pop_density_df <- readxl::read_xlsx("/Users/lissandroalvarado/Downloads/ACSST5Y2020.S1902-2024-06-10T184913.xlsx", sheet = 2)
 
 county_area <- pop_density_df |> 
-  filter(`...1` == 'Square Land Miles, 2020') |> 
-  select(-Pennsylvania, -'...1') |> 
-  pivot_longer(cols = everything(), names_to = "county", values_to = 'Area') |> 
-  mutate(Area = as.numeric(gsub(",", "", Area))) |> 
-  mutate(county = stringr::str_remove(county, " County"))
+  rename(variable_label = ...1) |>
+  filter(variable_label == 'With wages or salary income') |>
+  #select(-Pennsylvania, -'...1') |> 
+  pivot_longer(cols = -variable_label, names_to = "county", values_to = 'Household Income') |>
+  janitor::clean_names() |> 
+  mutate(household_income = as.numeric(gsub(",","", household_income))) |>
+  mutate(county = stringr::str_remove(county, " County, Pennsylvania")) |> select(-variable_label)
 ```
 
 ```{r}
-covid_cases_deaths_area <- covid_cases_deaths |> 
-  left_join(county_area, by = "county")
+#covid_cases_deaths_area <- covid_cases_deaths |> 
+ # left_join(county_area, by = "county")
+head(pop_density_df)
 ```
 
 
