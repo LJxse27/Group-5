@@ -1,0 +1,274 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Source: https://www.rural.pa.gov/download.cfm?file=Resources/excel/CountyProfile.xlsx
+
+
+```{r}
+library(tidyverse)
+covid_cases_deaths <- read_csv("https://raw.githubusercontent.com/36-SURE/36-SURE.github.io/main/data/covid_cases_deaths.csv")
+```
+
+List of hypotheses:
+* higher population density is associated with higher covid case rates
+* counties in higher latitudes have different covid case rates than those at lower latitudes
+* the seven day rolling average of new cases (cases_avg_new_rate) shows distinct trends over time related to policy change
+* countries with higher cumulative cases (cases_cume_rate) have lower new case rate (cases_rate) due to herd immunity effects 
+
+
+Hypothesis: More densely populated counties have higher rates of covid cases. 
+
+Variables: 
+* pop_density_cat (fct)
+* cases_rate (dbl)
+
+Graph options:
+* bar chart
+* side by side box-plots
+* violin plots
+* ridgeline plot
+
+## Join df with data on county area
+
+```{r}
+pop_density_df <- readxl::read_xlsx("/Users/lissandroalvarado/Downloads/ACSST5Y2020.S1902-2024-06-10T184913.xlsx", sheet = 2)
+
+county_area <- pop_density_df |> 
+  rename(variable_label = ...1) |>
+  filter(variable_label == 'With wages or salary income') |>
+  #select(-Pennsylvania, -'...1') |> 
+  pivot_longer(cols = -variable_label, names_to = "county", values_to = 'Household Income') |>
+  janitor::clean_names() |> 
+  mutate(household_income = as.numeric(gsub(",","", household_income))) |>
+  mutate(county = stringr::str_remove(county, " County, Pennsylvania")) |> select(-variable_label)
+```
+
+```{r}
+#covid_cases_deaths_area <- covid_cases_deaths |> 
+ # left_join(county_area, by = "county")
+head(pop_density_df)
+```
+
+
+## Visualize relationship between pop density and cases
+
+
+```{r}
+# Create pop density variable
+covid_with_density <- covid_cases_deaths_area |> 
+  group_by(county) |> 
+  mutate(pop_density = population / Area)
+```
+
+
+```{r}
+# Bar chart
+library(dplyr)
+library(forcats)
+covid_with_density |> 
+  ggplot(aes(x = cases_rate, y = reorder(county, cases_rate))) +
+  geom_col(fill = "midnightblue") +
+  labs(title = "COVID case rate by ennsylvania county",
+       x = "Cases rate",
+       y = "County")
+```
+
+Factor covid density into 3 categories by percentile
+
+
+```{r}
+# Find 33 and 66th quartlies
+percentiles = quantile(covid_with_density$pop_density, probs = c(0.33, 0.66))
+percentiles
+```
+
+Create violin plots with the 3 categories
+
+```{r}
+covid_with_density <- covid_with_density |> 
+  mutate(density_cat = cut(pop_density, 
+      breaks = c(-Inf, percentiles[1], percentiles[2], Inf),
+      labels = c("Low Density", "Medium Density", "High Density")))
+```
+
+```{r}
+covid_with_density |> 
+  ggplot(aes(x = cases_rate, y = density_cat)) +
+  geom_boxplot(alpha = 0.5, width = 0.2, aes(fill = density_cat)) +
+  geom_violin(alpha = 0.5, aes(fill = density_cat))
+```
+
+There appears to be outliers.
+
+```{r}
+# Identifying the outlier
+Q1 = quantile(covid_with_density$cases_rate, 0.25)
+Q3 = quantile(covid_with_density$cases_rate, 0.75)
+IQR = Q3 - Q1
+
+# Remove outlier
+lower_bound = Q1 - 1.5 * IQR
+upper_bound = Q3 + 1.5 * IQR
+
+filtered_data <- covid_with_density |> 
+  group_by(county) |> 
+  filter(lower_bound <= cases_rate & cases_rate <= upper_bound) |> 
+  mutate(density_cat = cut(pop_density, 
+      breaks = c(-Inf, percentiles[1], percentiles[2], Inf),
+      labels = c("Low Density", "Medium Density", "High Density")))
+
+# Graph data without outliers
+filtered_data |> 
+  ggplot(aes(x = cases_rate, y = density_cat)) +
+  geom_boxplot(alpha = 0.2, width = 0.1, aes(fill = density_cat)) +
+  geom_violin(alpha = 0.5, aes(fill = density_cat)) +
+  labs(title = "COVID cases by population density, excluding outliers",
+       x = "Cases rate",
+       y = "Population Density",
+       fill = "Populaiton Density") +
+  theme(legend.position = "none")
+```
+
+Which counties are low density and what is their death rate?
+
+```{r}
+filtered_data |> 
+  group_by(county) |> 
+  filter(density_cat == "Low Density") |> 
+  distinct(county, .keep_all = TRUE)
+```
+
+Ridgeline plot
+
+```{r}
+library(ggridges)
+filtered_data |> 
+  ggplot(aes(x = cases_rate, y = density_cat)) +
+  geom_density_ridges(scale = 0.8, alpha = 0.5, aes(fill = density_cat)) +
+  theme(legend.position = "none") +
+  labs(title = "COVID cases by population density, excluding outliers",
+     x = "Cases rate",
+     y = "Population Density",
+     fill = "Populaiton Density")
+```
+
+
+
+
+```{r}
+names(covid_cases_deaths)
+```
+
+```{r}
+glimpse(covid_cases_deaths)
+```
+
+```{r}
+summary(covid_cases_deaths$deaths_rate)
+```
+
+```{r}
+summary(covid_cases_deaths$date)
+```
+
+
+Potential questions:
+- how do covid deaths vary overtime by county (Allegheny vs Philly)
+- map of pennsylvania and density of cases
+- compare cases vs deaths based on region
+- population overtime and covid deaths
+- does the population density of counties affect covid cases / deaths?
+
+
+Question: How do covid deaths vary overtime by county (comparing 3 major counties)
+
+```{r}
+library(zoo)
+covid_cases_deaths2 <- covid_cases_deaths |> 
+  filter(county %in% c("Allegheny", "Philadelphia", "Montgomery")) |> 
+  group_by(county) |> 
+  arrange(date) |> 
+  mutate(rolling_avg_deaths = rollmean(deaths, k = 14, fill = NA, align = "right"))
+```
+
+
+
+```{r}
+library(zoo)
+covid_cases_deaths2 |> 
+  filter(county %in% c("Allegheny", "Philadelphia", "Montgomery")) |> 
+  ggplot(aes(x = date, y = deaths)) +
+  geom_line(linewidth = 0.4) +
+  # geom_line(aes(y = rolling_avg_deaths), color = "red") +
+  facet_wrap(~ county) +
+  theme_light() +
+  labs(title = "Covid deaths of major counties over time",
+       x = "Date",
+       y = "Covid Deaths") 
+  # theme(strip.background = element_blank(),
+  #       plot.title = element_text(hjust = 0.5, 
+  #                                 face = "bold"))
+```
+
+```{r}
+covid_cases_deaths3 <- covid_cases_deaths |> 
+  filter(county %in% c("Allegheny", "Philadelphia")) |> 
+  group_by(county) |> 
+  arrange(date) |> 
+  mutate(rolling_avg_death_rate = rollmean(deaths_rate, k = 14, fill = NA, align = "center"))
+```
+
+
+By proportion
+
+```{r}
+covid_cases_deaths3 |> 
+  filter(county %in% c("Allegheny", "Philadelphia")) |> 
+  ggplot(aes(x = date, y = deaths_rate)) + 
+  geom_line(linewidth=0.5, alpha=0.8) +
+  geom_line(aes(y = rolling_avg_death_rate), color = "red") +
+  facet_wrap(~county) +
+  theme_light()
+  
+```
+
+How long it takes for cases to turn into deaths - time series with cases and deaths
+
+
+Hypothesis: countries with higher cumulative cases (cases_cume_rate) have lower new case rate (cases_rate) due to herd immunity effects 
+
+```{r}
+covid_cases_deaths |> 
+  mutate(date = as.Date(date)) |> 
+  filter(date >= '2020-12-05') |> 
+  ggplot(aes(x = cases_cume_rate, y = cases_rate)) +
+  geom_point(size = 0.5, alpha = 0.3) +
+  geom_smooth(method = "loess") +
+  labs(title = "Covid cases rate by cumulative cases rate",
+       x = "Cumulative cases rate",
+       y = "New cases rate")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
