@@ -127,6 +127,8 @@ filtered_data |>
        fill = "Populaiton Density") +
   theme(legend.position = "none")
 ```
+Note on graph how low, med, and high density were determined
+
 
 Which counties are low density and what is their death rate?
 
@@ -224,12 +226,14 @@ By proportion
 covid_cases_deaths3 |> 
   filter(county %in% c("Allegheny", "Philadelphia")) |> 
   ggplot(aes(x = date, y = deaths_rate)) + 
-  geom_line(linewidth=0.5, alpha=0.8) +
+  # geom_line(linewidth=0.5, alpha=0.8) +
   geom_line(aes(y = rolling_avg_death_rate), color = "red") +
   facet_wrap(~county) +
   theme_light()
   
 ```
+Look at causes of local spikes, causes, policies?
+
 
 How long it takes for cases to turn into deaths - time series with cases and deaths
 
@@ -239,7 +243,7 @@ Hypothesis: countries with higher cumulative cases (cases_cume_rate) have lower 
 ```{r}
 covid_cases_deaths |> 
   mutate(date = as.Date(date)) |> 
-  filter(date >= '2020-12-05') |> 
+  filter(date >= '2020-11-01') |> 
   ggplot(aes(x = cases_cume_rate, y = cases_rate)) +
   geom_point(size = 0.5, alpha = 0.3) +
   geom_smooth(method = "loess") +
