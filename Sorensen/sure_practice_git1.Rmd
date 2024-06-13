@@ -1,58 +1,34 @@
 ---
-title: "R Notebook"
+title: "Covid data EDA"
 output: html_notebook
 ---
-
-Source: https://www.rural.pa.gov/download.cfm?file=Resources/excel/CountyProfile.xlsx
-
 
 ```{r}
 library(tidyverse)
 covid_cases_deaths <- read_csv("https://raw.githubusercontent.com/36-SURE/36-SURE.github.io/main/data/covid_cases_deaths.csv")
 ```
 
-List of hypotheses:
-* higher population density is associated with higher covid case rates
-* counties in higher latitudes have different covid case rates than those at lower latitudes
-* the seven day rolling average of new cases (cases_avg_new_rate) shows distinct trends over time related to policy change
-* countries with higher cumulative cases (cases_cume_rate) have lower new case rate (cases_rate) due to herd immunity effects 
+Hypothesis 1: More densely populated counties have higher rates of covid cases. 
 
+Join main df with data on county area
 
-Hypothesis: More densely populated counties have higher rates of covid cases. 
-
-Variables: 
-* pop_density_cat (fct)
-* cases_rate (dbl)
-
-Graph options:
-* bar chart
-* side by side box-plots
-* violin plots
-* ridgeline plot
-
-## Join df with data on county area
+Source: https://www.rural.pa.gov/download.cfm?file=Resources/excel/CountyProfile.xlsx
 
 ```{r}
-pop_density_df <- readxl::read_xlsx("/Users/lissandroalvarado/Downloads/ACSST5Y2020.S1902-2024-06-10T184913.xlsx", sheet = 2)
+pop_density_df <- read_csv("https://raw.githubusercontent.com/LJxse27/Group-5/main/CountyProfile.csv")
 
 county_area <- pop_density_df |> 
-  rename(variable_label = ...1) |>
-  filter(variable_label == 'With wages or salary income') |>
-  #select(-Pennsylvania, -'...1') |> 
-  pivot_longer(cols = -variable_label, names_to = "county", values_to = 'Household Income') |>
-  janitor::clean_names() |> 
-  mutate(household_income = as.numeric(gsub(",","", household_income))) |>
-  mutate(county = stringr::str_remove(county, " County, Pennsylvania")) |> select(-variable_label)
+  filter(`...1` == 'Square Land Miles, 2020') |> 
+  select(-Pennsylvania, -'...1') |> 
+  pivot_longer(cols = everything(), names_to = "county", values_to = 'Area') |> 
+  mutate(Area = as.numeric(gsub(",", "", Area))) |> 
+  mutate(county = stringr::str_remove(county, " County"))
+
+covid_cases_deaths_area <- covid_cases_deaths |> 
+  left_join(county_area, by = "county")
 ```
 
-```{r}
-#covid_cases_deaths_area <- covid_cases_deaths |> 
- # left_join(county_area, by = "county")
-head(pop_density_df)
-```
-
-
-## Visualize relationship between pop density and cases
+## Visualize relationship between pop density, cases rate, and deaths rate
 
 
 ```{r}
@@ -62,21 +38,7 @@ covid_with_density <- covid_cases_deaths_area |>
   mutate(pop_density = population / Area)
 ```
 
-
-```{r}
-# Bar chart
-library(dplyr)
-library(forcats)
-covid_with_density |> 
-  ggplot(aes(x = cases_rate, y = reorder(county, cases_rate))) +
-  geom_col(fill = "midnightblue") +
-  labs(title = "COVID case rate by ennsylvania county",
-       x = "Cases rate",
-       y = "County")
-```
-
 Factor covid density into 3 categories by percentile
-
 
 ```{r}
 # Find 33 and 66th quartlies
@@ -84,190 +46,284 @@ percentiles = quantile(covid_with_density$pop_density, probs = c(0.33, 0.66))
 percentiles
 ```
 
-Create violin plots with the 3 categories
+Plot variables using violin plot and boxplots, excluding outliers
 
 ```{r}
-covid_with_density <- covid_with_density |> 
-  mutate(density_cat = cut(pop_density, 
-      breaks = c(-Inf, percentiles[1], percentiles[2], Inf),
-      labels = c("Low Density", "Medium Density", "High Density")))
-```
+# Identifying the outliers
+Q1_cases = quantile(covid_with_density$cases_rate, 0.25)
+Q3_cases = quantile(covid_with_density$cases_rate, 0.75)
+IQR_cases = Q3_cases - Q1_cases
 
-```{r}
-covid_with_density |> 
-  ggplot(aes(x = cases_rate, y = density_cat)) +
-  geom_boxplot(alpha = 0.5, width = 0.2, aes(fill = density_cat)) +
-  geom_violin(alpha = 0.5, aes(fill = density_cat))
-```
+Q1_deaths = quantile(covid_with_density$deaths_rate, 0.25)
+Q3_deaths = quantile(covid_with_density$deaths_rate, 0.75)
+IQR_deaths = Q3_deaths - Q1_deaths
 
-There appears to be outliers.
+# Remove outliers
+lower_bound_cases = Q1_cases - 1.5 * IQR_cases
+upper_bound_cases = Q3_cases + 1.5 * IQR_cases
 
-```{r}
-# Identifying the outlier
-Q1 = quantile(covid_with_density$cases_rate, 0.25)
-Q3 = quantile(covid_with_density$cases_rate, 0.75)
-IQR = Q3 - Q1
-
-# Remove outlier
-lower_bound = Q1 - 1.5 * IQR
-upper_bound = Q3 + 1.5 * IQR
+lower_bound_deaths = Q1_deaths - 1.5 * IQR_deaths
+upper_bound_deaths = Q3_deaths + 1.5 * IQR_deaths
 
 filtered_data <- covid_with_density |> 
   group_by(county) |> 
-  filter(lower_bound <= cases_rate & cases_rate <= upper_bound) |> 
+  filter(lower_bound_cases <= cases_rate & cases_rate <= upper_bound_cases & lower_bound_deaths <= deaths_rate & deaths_rate <= upper_bound_deaths) |> 
   mutate(density_cat = cut(pop_density, 
       breaks = c(-Inf, percentiles[1], percentiles[2], Inf),
       labels = c("Low Density", "Medium Density", "High Density")))
 
-# Graph data without outliers
-filtered_data |> 
+# Graph cases data without outliers
+cases_by_density <- filtered_data |> 
   ggplot(aes(x = cases_rate, y = density_cat)) +
   geom_boxplot(alpha = 0.2, width = 0.1, aes(fill = density_cat)) +
   geom_violin(alpha = 0.5, aes(fill = density_cat)) +
-  labs(title = "COVID cases by population density, excluding outliers",
+  labs(title = "COVID cases by pop. density",
        x = "Cases rate",
        y = "Population Density",
        fill = "Populaiton Density") +
   theme(legend.position = "none")
 ```
-Note on graph how low, med, and high density were determined
-
-
-Which counties are low density and what is their death rate?
-
-```{r}
-filtered_data |> 
-  group_by(county) |> 
-  filter(density_cat == "Low Density") |> 
-  distinct(county, .keep_all = TRUE)
-```
-
-Ridgeline plot
-
-```{r}
-library(ggridges)
-filtered_data |> 
-  ggplot(aes(x = cases_rate, y = density_cat)) +
-  geom_density_ridges(scale = 0.8, alpha = 0.5, aes(fill = density_cat)) +
-  theme(legend.position = "none") +
-  labs(title = "COVID cases by population density, excluding outliers",
-     x = "Cases rate",
-     y = "Population Density",
-     fill = "Populaiton Density")
-```
-
-
 
 
 ```{r}
-names(covid_cases_deaths)
+# Graph data without outliers
+deaths_by_density <- filtered_data |> 
+  ggplot(aes(x = deaths_rate, y = density_cat)) +
+  geom_boxplot(alpha = 0.2, width = 0.1, aes(fill = density_cat)) +
+  geom_violin(alpha = 0.5, aes(fill = density_cat)) +
+  labs(title = "COVID deaths by pop. density",
+       x = "Deaths rate",
+       y = "",
+       fill = "Population Density") +
+  theme(legend.position = "none")
 ```
-
-```{r}
-glimpse(covid_cases_deaths)
-```
-
-```{r}
-summary(covid_cases_deaths$deaths_rate)
-```
-
-```{r}
-summary(covid_cases_deaths$date)
-```
-
-
-Potential questions:
-- how do covid deaths vary overtime by county (Allegheny vs Philly)
-- map of pennsylvania and density of cases
-- compare cases vs deaths based on region
-- population overtime and covid deaths
-- does the population density of counties affect covid cases / deaths?
-
-
-Question: How do covid deaths vary overtime by county (comparing 3 major counties)
-
-```{r}
-library(zoo)
-covid_cases_deaths2 <- covid_cases_deaths |> 
-  filter(county %in% c("Allegheny", "Philadelphia", "Montgomery")) |> 
-  group_by(county) |> 
-  arrange(date) |> 
-  mutate(rolling_avg_deaths = rollmean(deaths, k = 14, fill = NA, align = "right"))
-```
-
 
 
 ```{r}
-library(zoo)
-covid_cases_deaths2 |> 
-  filter(county %in% c("Allegheny", "Philadelphia", "Montgomery")) |> 
-  ggplot(aes(x = date, y = deaths)) +
-  geom_line(linewidth = 0.4) +
-  # geom_line(aes(y = rolling_avg_deaths), color = "red") +
-  facet_wrap(~ county) +
-  theme_light() +
-  labs(title = "Covid deaths of major counties over time",
-       x = "Date",
-       y = "Covid Deaths") 
-  # theme(strip.background = element_blank(),
-  #       plot.title = element_text(hjust = 0.5, 
-  #                                 face = "bold"))
+library(cowplot)
+plot_grid(cases_by_density, deaths_by_density)
 ```
 
-```{r}
-covid_cases_deaths3 <- covid_cases_deaths |> 
-  filter(county %in% c("Allegheny", "Philadelphia")) |> 
-  group_by(county) |> 
-  arrange(date) |> 
-  mutate(rolling_avg_death_rate = rollmean(deaths_rate, k = 14, fill = NA, align = "center"))
-```
-
-
-By proportion
-
-```{r}
-covid_cases_deaths3 |> 
-  filter(county %in% c("Allegheny", "Philadelphia")) |> 
-  ggplot(aes(x = date, y = deaths_rate)) + 
-  # geom_line(linewidth=0.5, alpha=0.8) +
-  geom_line(aes(y = rolling_avg_death_rate), color = "red") +
-  facet_wrap(~county) +
-  theme_light()
-  
-```
-Look at causes of local spikes, causes, policies?
-
-
-How long it takes for cases to turn into deaths - time series with cases and deaths
-
-
-Hypothesis: countries with higher cumulative cases (cases_cume_rate) have lower new case rate (cases_rate) due to herd immunity effects 
+Hypothesis 2: counties with higher cumulative cases (cases_cume_rate) have lower new case rate (cases_rate) due to herd immunity effects 
 
 ```{r}
 covid_cases_deaths |> 
+  filter(county %in% c("Allegheny", "Montgomery", "Philadelphia")) |>
   mutate(date = as.Date(date)) |> 
-  filter(date >= '2020-11-01') |> 
+  filter(date >= '2020-10-01') |> 
   ggplot(aes(x = cases_cume_rate, y = cases_rate)) +
   geom_point(size = 0.5, alpha = 0.3) +
   geom_smooth(method = "loess") +
+  facet_wrap(~county, scales = "free") +
   labs(title = "Covid cases rate by cumulative cases rate",
        x = "Cumulative cases rate",
        y = "New cases rate")
 ```
+Potential explanations for why the curves are decreasing: 
+- spike after thanksgiving, people won't test for covid they got over christmas until January
+
+
+## Clustering
+
+Questions:
+- counties with early peaks vs late peaks (max cases date)?
+- which areas had most severe outbreaks (max cases rate)?
+
+```{r}
+library(dplyr)
+
+covid_agg <- covid_cases_deaths |> 
+  group_by(county) |> 
+  summarize(max_cases_rate = max(cases_rate),
+         max_cases_date = date[which.max(cases_rate)],
+         median_cases = median(cases_rate))
+```
+
+
+```{r}
+library(lubridate)
+# Convert max_cases_date to numeric (e.g., number of days since a reference date)
+covid_agg <- covid_agg |> 
+  mutate(max_cases_date_numeric = as.numeric(difftime(max_cases_date, as.Date("2020-04-01"), units = "days")))
+```
+
+
+```{r}
+# Scale the data for clustering
+covid_scaled <- covid_agg |>
+  select(max_cases_rate, max_cases_date_numeric, median_cases) |>
+  scale()
+```
+
+```{r}
+# Create distance matrix
+distance_matrix <- dist(covid_scaled)
+```
+
+```{r}
+hc_complete <- hclust(distance_matrix, method = "complete")
+```
+
+
+```{r}
+# Convert to dendrogram for plotting
+dend <- as.dendrogram(hc_complete)
+
+# Convert dendrogram to data frame for ggplot2
+dend_data <- dendro_data(dend)
+
+# Create a data frame with the labels
+label_data <- dend_data$labels %>%
+  mutate(label = covid_agg$county[order.dendrogram(dend)])
+# Plot the dendrogram with labels
+ggplot() +
+  geom_segment(data = dend_data$segments, 
+               aes(x = x, y = y, xend = xend, yend = yend)) +
+  geom_text(data = label_data, 
+            aes(x = x, y = y, label = label), 
+            hjust = -0.1, size = 2) + # Adjust size as needed
+  coord_flip() + 
+  scale_y_reverse() + 
+  geom_hline(yintercept = 4.5, color = "red") +
+  labs(y = "Dissimilarity between clusters", 
+       x = NULL,
+       title = "Dendrogram of County Clustering Based on COVID-19 Metrics") +
+  theme_minimal() +
+  theme(panel.grid = element_blank())
+```
+
+```{r}
+# Cut dendrogram into clusters
+num_clusters <- 4
+clusters <- cutree(hc_complete, k = num_clusters)
+```
+
+```{r}
+# Create data frame with counties and their cluster assignments
+cluster_assignments <- data.frame(county = covid_agg$county, cluster = as.factor(clusters))
+```
+
+
+```{r}
+# Merge the two datasets
+covid_agg_with_clusters <- left_join(covid_agg, cluster_assignments, by = "county")
+```
+
+
+```{r}
+library(sf)
+library(tigris)
+# Get the shapefile for Pennsylvania counties
+pa_counties <- counties(state = "PA", cb = TRUE, class = "sf")
+```
+```{r}
+# Merge geographic data with cluster data
+pa_counties <- pa_counties |> 
+  left_join(covid_agg_with_clusters, by = c("NAME" = "county"))
+```
+
+
+```{r}
+# Plot clusters on choropleth
+pa_counties |> 
+  ggplot() +
+  geom_sf(aes(fill = cluster)) +
+  # scale_fill_viridis_d(name = "Cluster", option = "inferno", na.value = "grey50") +
+  geom_sf_text(aes(label = NAME), size = 2, check_overlap = TRUE) +
+  labs(title = "Choropleth Map of Pennsylvania Counties by Cluster",
+       subtitle = "Clusters based on COVID-19 Cases Data",
+       caption = "Source: https://raw.githubusercontent.com/36-SURE/36-SURE.github.io/main/data/covid_cases_deaths.csv") +
+  scale_fill_brewer(palette = "Set2", na.value = "grey50") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid = element_blank())
+  
+```
+
+Summary statistics for each cluster:
+
+```{r}
+cluster_summary <- covid_agg_with_clusters |> 
+  group_by(cluster) |> 
+  summarize(
+    median_max_cases_rate = median(max_cases_rate, na.rm = TRUE),
+    median_max_cases_date_numeric = median(max_cases_date, na.rm = TRUE),
+    median_median_cases = median(median_cases, na.rm = TRUE)
+  )
+```
 
 
 
+```{r}
+# Boxplots for max cases rates by cluster
+covid_agg_with_clusters |> 
+  ggplot(aes(x = factor(cluster), y = max_cases_rate)) +
+  geom_boxplot(alpha = 0.8, aes(fill = factor(cluster))) +
+  labs(title = "Distribution of max cases rate by cluster",
+       fill = "Cluster",
+       x = "Cluster", 
+       y = "Max cases rate") +
+  scale_fill_brewer(palette = "Set2", na.value = "grey50") +
+  theme_light() 
+  
+```
 
+```{r}
+# Boxplots for max cases dates by cluster
+covid_agg_with_clusters |> 
+  ggplot(aes(x = factor(cluster), y = max_cases_date)) +
+  geom_boxplot(alpha = 0.8, aes(fill = factor(cluster))) +
+  labs(title = "Distribution of max cases date by cluster",
+       fill = "Cluster",
+       x = "Cluster",
+       y = "Max cases date") +
+  scale_fill_brewer(palette = "Set2", na.value = "grey50") +
+  theme_light() 
+  
+```
 
+```{r}
+# Boxplots for median cases rates by cluster
+covid_agg_with_clusters |> 
+  ggplot(aes(x = factor(cluster), y = median_cases)) +
+  geom_boxplot(alpha = 0.8, aes(fill = factor(cluster))) +
+  labs(title = "Distribution of median cases rate by cluster",
+       fill = "Cluster",
+       x = "Cluster",
+       y = "Median cases rate") +
+  scale_fill_brewer(palette = "Set2", na.value = "grey50") +
+  theme_light() 
+  
+```
 
+Visualize max cases in Cameron and Crawford
 
+```{r}
+covid_cases_deaths |> 
+  filter(county %in% c("Crawford", "Cameron")) |> 
+  ggplot(aes(x = date, y = cases_rate)) +
+  facet_wrap(~county) +
+  labs(title = "Visualizing cases spikes in Cameron and Crawford",
+       x = "Date", 
+       y = "Cases rate") +
+  geom_line()
+```
 
+Visualize Centre cases rate
 
-
-
-
-
-
+```{r}
+covid_cases_deaths |> 
+  filter(county == "Centre") |> 
+  ggplot(aes(x = date, y = cases_rate)) +
+  facet_wrap(~county) +
+  labs(title = "Visualizing date of covid spikes in Centre County",
+       x = "Date",
+       y = "Cases rate") +
+  geom_line()
+```
 
 
 
